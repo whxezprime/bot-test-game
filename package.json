@@ -1,0 +1,14 @@
+{
+  "name": "discord-mini-gta",
+  "version": "1.0.0",
+  "description": "Bot Discord chơi game bản đồ thành phố Multiplayer",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.44",
+    "better-sqlite3": "^11.0.0",
+    "discord.js": "^14.14.1"
+  }
+}
