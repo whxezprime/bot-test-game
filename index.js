@@ -26,7 +26,7 @@ const AMONG_US_COLORS = [
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const db = new Database('amongus.db');
 
-// Khởi tạo DB (Thêm cột color)
+// Khởi tạo DB
 db.prepare(`CREATE TABLE IF NOT EXISTS players (
     user_id TEXT PRIMARY KEY, game_id TEXT, name TEXT, color TEXT, role TEXT, is_alive INTEGER, x INTEGER, y INTEGER
 )`).run();
@@ -51,7 +51,7 @@ function drawAmongUs(ctx, x, y, color) {
     ctx.roundRect(x, y, 18, 22, 8); // Thân
     ctx.fill();
     
-    // 3. Vẽ Chân (2 ống nhỏ dưới đáy)
+    // 3. Vẽ Chân
     ctx.fillRect(x + 3, y + 20, 5, 6);
     ctx.fillRect(x + 11, y + 20, 5, 6);
 
@@ -73,7 +73,7 @@ function drawAmongUs(ctx, x, y, color) {
     ctx.fill();
 }
 
-// --- HÀM KIỂM TRA VA CHẠM ---
+// --- HÀM KIỂM TRA VA CHẠM (XUYÊN TƯỜNG) ---
 function canMove(x, y) {
     if (!mapCollisionData) return true;
     if (x < 0 || y < 0 || x + PLAYER_SIZE > MAP_WIDTH || y + PLAYER_SIZE > MAP_HEIGHT) return false;
@@ -87,8 +87,9 @@ function canMove(x, y) {
     const b = mapCollisionData[index + 2];
     const alpha = mapCollisionData[index + 3];
 
+    // Với ảnh JPG, nền vũ trụ thường là màu đen tuyền
     if (alpha < 50) return false; 
-    if (r < 40 && g < 40 && b < 40) return false; 
+    if (r < 40 && g < 40 && b < 40) return false; // Chặn màu đen/xám đậm (vũ trụ/tường)
 
     return true;
 }
@@ -113,7 +114,6 @@ async function renderGame(gameId) {
     const players = db.prepare("SELECT * FROM players WHERE game_id = ?").all(gameId);
     players.forEach((p) => {
         if (p.is_alive === 1) {
-            // Gọi hàm vẽ Among Us với màu của người chơi
             drawAmongUs(ctx, p.x, p.y, p.color);
             
             // Vẽ tên
@@ -121,24 +121,23 @@ async function renderGame(gameId) {
             ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText(p.name, p.x + 9, p.y - 8);
-            ctx.textAlign = 'left'; // Reset
+            ctx.textAlign = 'left';
         } else if (game.state === 'playing') {
-            // Xác chết (Nửa người)
+            // Xác chết
             ctx.fillStyle = p.color;
             ctx.beginPath();
             ctx.roundRect(p.x, p.y + 10, 18, 12, 8);
             ctx.fill();
-            // Xương
             ctx.fillStyle = 'white';
             ctx.font = '16px sans-serif';
             ctx.fillText("🦴", p.x + 2, p.y + 10);
         }
     });
 
-    return canvas.toBuffer('image/png');
+    return canvas.toBuffer('image/jpeg'); // Xuất ra JPEG cho nhẹ
 }
 
-// --- GIAO DIỆN ---
+// --- GIAO DIỆN NÚT BẤM ---
 function getGameButtons(isLobby = false) {
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('up').setEmoji('⬆️').setStyle(ButtonStyle.Secondary).setDisabled(isLobby),
@@ -158,15 +157,17 @@ function getGameButtons(isLobby = false) {
 client.once('ready', async () => {
     console.log(`Bot ${client.user.tag} đã online!`);
     try {
-        lobbyImage = await loadImage(path.join(__dirname, 'assets', 'lobby.png'));
-        mapImage = await loadImage(path.join(__dirname, 'assets', 'map.png'));
+        // Đã đổi thành đuôi .jpg
+        lobbyImage = await loadImage(path.join(__dirname, 'assets', 'lobby.jpg'));
+        mapImage = await loadImage(path.join(__dirname, 'assets', 'map.jpg'));
         
         const colCanvas = createCanvas(MAP_WIDTH, MAP_HEIGHT);
         const colCtx = colCanvas.getContext('2d');
         colCtx.drawImage(mapImage, 0, 0, MAP_WIDTH, MAP_HEIGHT);
         mapCollisionData = colCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data;
+        console.log("✅ Đã load ảnh JPG và dữ liệu va chạm thành công!");
     } catch (e) { 
-        console.log("⚠️ Lỗi load ảnh nền.", e.message); 
+        console.log("⚠️ Lỗi load ảnh. Hãy kiểm tra lại tên file (lobby.jpg, map.jpg) trong thư mục assets.", e.message); 
     }
     
     const guild = client.guilds.cache.first();
@@ -186,30 +187,27 @@ client.on('interactionCreate', async interaction => {
         db.prepare("DELETE FROM players WHERE game_id = ?").run(gameId);
         
         const buffer = await renderGame(gameId);
-        const embed = new EmbedBuilder().setTitle("🚀 PHÒNG CHỜ AMONG US").setDescription("Gõ `/vaogame` để tham gia.").setImage('attachment://map.png');
-        await interaction.reply({ embeds: [embed], files: [{ attachment: buffer, name: 'map.png' }], components: getGameButtons(true) });
+        const embed = new EmbedBuilder().setTitle("🚀 PHÒNG CHỜ AMONG US").setDescription("Gõ `/vaogame` để tham gia.").setImage('attachment://map.jpg');
+        await interaction.reply({ embeds: [embed], files: [{ attachment: buffer, name: 'map.jpg' }], components: getGameButtons(true) });
     }
 
-    // VÀO GAME (RANDOM MÀU)
+    // VÀO GAME
     if (interaction.isChatInputCommand() && interaction.commandName === 'vaogame') {
         const game = db.prepare("SELECT * FROM games WHERE game_id = ?").get(gameId);
         if (!game || game.state !== 'lobby') return interaction.reply({ content: "Không có phòng chờ!", ephemeral: true });
         
-        // Lấy danh sách màu đã bị dùng
         const usedColors = db.prepare("SELECT color FROM players WHERE game_id = ?").all(gameId).map(p => p.color);
-        // Lọc ra các màu chưa ai dùng
         const availableColors = AMONG_US_COLORS.filter(c => !usedColors.includes(c));
         
-        if (availableColors.length === 0) return interaction.reply({ content: "Hết màu để chọn rồi! (Tối đa 10 người)", ephemeral: true });
+        if (availableColors.length === 0) return interaction.reply({ content: "Hết màu để chọn rồi!", ephemeral: true });
 
-        // Random 1 màu từ danh sách còn trống
         const randomColor = availableColors[Math.floor(Math.random() * availableColors.length)];
 
         db.prepare("INSERT OR IGNORE INTO players (user_id, game_id, name, color, is_alive, x, y) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .run(interaction.user.id, gameId, interaction.user.displayName, randomColor, 1, 400, 300);
         
         const buffer = await renderGame(gameId);
-        await interaction.reply({ content: `${interaction.user.displayName} đã tham gia!`, files: [{ attachment: buffer, name: 'map.png' }] });
+        await interaction.reply({ content: `${interaction.user.displayName} đã tham gia!`, files: [{ attachment: buffer, name: 'map.jpg' }] });
     }
 
     // BẮT ĐẦU GAME
@@ -224,8 +222,8 @@ client.on('interactionCreate', async interaction => {
         db.prepare("UPDATE players SET x = 400, y = 200 WHERE user_id != ? AND game_id = ?").run(impostor.user_id, gameId);
 
         const buffer = await renderGame(gameId);
-        const embed = new EmbedBuilder().setTitle("🔪 GAME BẮT ĐẦU!").setDescription("Ai là Impostor?").setImage('attachment://map.png');
-        await interaction.reply({ embeds: [embed], files: [{ attachment: buffer, name: 'map.png' }], components: getGameButtons(false) });
+        const embed = new EmbedBuilder().setTitle("🔪 GAME BẮT ĐẦU!").setDescription("Ai là Impostor?").setImage('attachment://map.jpg');
+        await interaction.reply({ embeds: [embed], files: [{ attachment: buffer, name: 'map.jpg' }], components: getGameButtons(false) });
         
         const impUser = await client.users.fetch(impostor.user_id);
         impUser.send("🔪 BẠN LÀ IMPOSTOR! Hãy giết sạch Crewmate.").catch(()=>{});
@@ -252,12 +250,11 @@ client.on('interactionCreate', async interaction => {
             if (canMove(nx, ny)) {
                 db.prepare("UPDATE players SET x = ?, y = ? WHERE user_id = ?").run(nx, ny, player.user_id);
                 const buffer = await renderGame(gameId);
-                return await interaction.update({ files: [{ attachment: buffer, name: 'map.png' }] });
+                return await interaction.update({ files: [{ attachment: buffer, name: 'map.jpg' }] });
             } else {
                 return interaction.reply({ content: "🧱 Không thể đi xuyên tường!", ephemeral: true });
             }
         }
-        // Các nút Kill/Report/Emergency (Logic tương tự như trước)
     }
 });
 
