@@ -1,56 +1,63 @@
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
 
 // --- CẤU HÌNH CƠ BẢN ---
 const TOKEN = "ĐIỀN_TOKEN_CỦA_BẠN_VÀO_ĐÂY"; // <--- THAY TOKEN VÀO ĐÂY
 const MAP_WIDTH = 800;
 const MAP_HEIGHT = 600;
-const GRID_SIZE = 25; // Kích thước mỗi bước di chuyển
+const GRID_SIZE = 25; // Kích thước nhân vật
 
-// Khởi tạo Bot
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// Khởi tạo Database (Lưu vị trí người chơi)
+// Database
 const db = new Database('game.db');
 db.prepare(`CREATE TABLE IF NOT EXISTS players (
-    user_id TEXT PRIMARY KEY, 
-    name TEXT, 
-    x INTEGER, 
-    y INTEGER
+    user_id TEXT PRIMARY KEY, name TEXT, x INTEGER, y INTEGER
 )`).run();
+
+// --- BIẾN LƯU ẢNH PIXEL ---
+let mapImage = null;
+let playerImage = null;
 
 // --- HÀM VẼ BẢN ĐỒ ---
 function generateMapBuffer() {
     const canvas = createCanvas(MAP_WIDTH, MAP_HEIGHT);
     const ctx = canvas.getContext('2d');
 
-    // 1. Vẽ nền
-    ctx.fillStyle = '#2c3e50'; 
-    ctx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    // Tắt làm mờ (Anti-aliasing) để pixel sắc nét
+    ctx.imageSmoothingEnabled = false; 
 
-    // 2. Vẽ đường xá và tòa nhà
-    ctx.fillStyle = '#7f8c8d'; // Đường
-    ctx.fillRect(100, 100, 600, 50);
-    ctx.fillRect(300, 50, 50, 500);
+    // 1. Vẽ nền bản đồ
+    if (mapImage) {
+        ctx.drawImage(mapImage, 0, 0, MAP_WIDTH, MAP_HEIGHT);
+    } else {
+        // Fallback nếu không tìm thấy ảnh map.png
+        ctx.fillStyle = '#2c3e50';
+        ctx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    }
 
-    ctx.fillStyle = '#34495e'; // Tòa nhà
-    ctx.fillRect(150, 200, 100, 100);
-    ctx.strokeStyle = '#ecf0f1'; // Viền tòa nhà
-    ctx.strokeRect(150, 200, 100, 100);
-
-    // 3. Lấy tất cả người chơi từ DB và vẽ lên
+    // 2. Lấy tất cả người chơi từ DB
     const players = db.prepare("SELECT * FROM players").all();
     
-    ctx.font = '14px sans-serif';
+    ctx.font = 'bold 14px sans-serif';
     players.forEach(p => {
-        // Vẽ nhân vật (hình vuông đỏ)
-        ctx.fillStyle = '#e74c3c';
-        ctx.fillRect(p.x, p.y, GRID_SIZE, GRID_SIZE);
-        ctx.strokeStyle = 'white';
-        ctx.strokeRect(p.x, p.y, GRID_SIZE, GRID_SIZE);
+        // Vẽ nhân vật
+        if (playerImage) {
+            ctx.drawImage(playerImage, p.x, p.y, GRID_SIZE, GRID_SIZE);
+        } else {
+            // Fallback nếu không tìm thấy ảnh player.png
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(p.x, p.y, GRID_SIZE, GRID_SIZE);
+            ctx.strokeStyle = 'white';
+            ctx.strokeRect(p.x, p.y, GRID_SIZE, GRID_SIZE);
+        }
 
-        // Vẽ tên
+        // Vẽ tên (Kèm viền đen để dễ đọc trên mọi nền)
+        ctx.fillStyle = 'black';
+        ctx.fillText(p.name, p.x + 1, p.y - 4);
         ctx.fillStyle = 'white';
         ctx.fillText(p.name, p.x, p.y - 5);
     });
@@ -70,17 +77,21 @@ function getButtons() {
     return [row];
 }
 
-// --- XỬ LÝ SỰ KIỆN ---
+// --- SỰ KIỆN KHỞI ĐỘNG ---
 client.once('ready', async () => {
     console.log(`Bot ${client.user.tag} đã online!`);
+
+    // Load ảnh Pixel từ thư mục assets
+    try {
+        mapImage = await loadImage(path.join(__dirname, 'assets', 'map.png'));
+        playerImage = await loadImage(path.join(__dirname, 'assets', 'player.png'));
+        console.log('✅ Đã load ảnh Pixel thành công!');
+    } catch (error) {
+        console.log('⚠️ Không tìm thấy ảnh trong thư mục assets. Sẽ dùng hình khối mặc định.');
+    }
     
     // Đăng ký lệnh Slash
-    const startCommand = {
-        name: 'batdau',
-        description: 'Bắt đầu vào thành phố',
-    };
-
-    // Đăng ký lệnh (Guild command để test nhanh, nếu muốn toàn cầu dùng client.application.commands.create)
+    const startCommand = { name: 'batdau', description: 'Bắt đầu vào thành phố' };
     if (client.guilds.cache.size > 0) {
         const guild = client.guilds.cache.first();
         await guild.commands.create(startCommand);
@@ -88,12 +99,12 @@ client.once('ready', async () => {
     }
 });
 
+// --- XỬ LÝ TƯƠNG TÁC ---
 client.on('interactionCreate', async interaction => {
-    // 1. Xử lý lệnh /batdau
     if (interaction.isChatInputCommand() && interaction.commandName === 'batdau') {
         const buffer = generateMapBuffer();
         const embed = new EmbedBuilder()
-            .setTitle("🏙️ Thành phố Discord")
+            .setTitle("🏙️ Thành phố Discord (Pixel Edition)")
             .setDescription("Dùng các nút mũi tên để di chuyển.\nMọi người trong server đều nhìn thấy bạn!")
             .setColor('#2ecc71')
             .setImage('attachment://map.png');
@@ -105,22 +116,19 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
-    // 2. Xử lý khi bấm nút
     if (interaction.isButton()) {
         const userId = interaction.user.id;
         const userName = interaction.user.displayName;
 
-        // Lấy thông tin người chơi từ DB
         let player = db.prepare("SELECT * FROM players WHERE user_id = ?").get(userId);
 
-        // Nếu chưa có trong DB, tạo mới ở giữa bản đồ
+        // Nếu chưa có, tạo mới ở giữa
         if (!player) {
             player = { user_id: userId, name: userName, x: MAP_WIDTH / 2, y: MAP_HEIGHT / 2 };
             db.prepare("INSERT INTO players (user_id, name, x, y) VALUES (?, ?, ?, ?)")
               .run(player.user_id, player.name, player.x, player.y);
         }
 
-        // Xử lý di chuyển
         let dx = 0, dy = 0;
         if (interaction.customId === 'up') dy -= GRID_SIZE;
         if (interaction.customId === 'down') dy += GRID_SIZE;
@@ -128,16 +136,14 @@ client.on('interactionCreate', async interaction => {
         if (interaction.customId === 'right') dx += GRID_SIZE;
 
         if (dx !== 0 || dy !== 0) {
-            // Cập nhật vị trí mới, giới hạn trong bản đồ
             let newX = Math.max(0, Math.min(MAP_WIDTH - GRID_SIZE, player.x + dx));
             let newY = Math.max(0, Math.min(MAP_HEIGHT - GRID_SIZE, player.y + dy));
 
             db.prepare("UPDATE players SET x = ?, y = ? WHERE user_id = ?").run(newX, newY, userId);
 
-            // Vẽ lại bản đồ và cập nhật tin nhắn
             const newBuffer = generateMapBuffer();
             const embed = new EmbedBuilder()
-                .setTitle("🏙️ Thành phố Discord")
+                .setTitle("🏙️ Thành phố Discord (Pixel Edition)")
                 .setColor('#2ecc71')
                 .setImage('attachment://map.png');
 
@@ -151,5 +157,4 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// Đăng nhập Bot
 client.login(TOKEN);
